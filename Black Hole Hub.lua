@@ -724,7 +724,7 @@ task.spawn(function()
     end
 end)
 
--- ПОСТОЯННОЕ ПРИКЛЕИВАНИЕ К СПИНЕ ЦЕЛИ (КЛЕЙ)
+-- ПОСТОЯННОЕ ПРИКЛЕИВАНИЕ К ЦЕЛИ СВЕРХУ (КЛЕЙ)
 RunService.RenderStepped:Connect(function()
     if not _G.AutoFarmLevel then return end
     if not currentTarget or not currentTarget.Parent or not currentTarget:FindFirstChild("HumanoidRootPart") then return end
@@ -734,10 +734,10 @@ RunService.RenderStepped:Connect(function()
     local mobRoot = currentTarget.HumanoidRootPart
     local myRoot = char.HumanoidRootPart
 
-    -- позиция строго за спиной врага, смотрим ему в спину
-    local behindCF = mobRoot.CFrame * CFrame.new(0, 0, _G.FarmDistance)
-    local lookAt = mobRoot.Position -- смотрим на врага (ему в спину)
-    local targetCF = CFrame.lookAt(behindCF.Position, lookAt)
+    -- позиция строго над врагом (по оси Y), смотрим на него
+    local aboveCF = mobRoot.CFrame * CFrame.new(0, _G.FarmDistance, 0)
+    local lookAt = mobRoot.Position -- смотрим на врага (сверху вниз)
+    local targetCF = CFrame.lookAt(aboveCF.Position, lookAt)
 
     -- мгновенная фиксация, как клей
     myRoot.CFrame = targetCF
