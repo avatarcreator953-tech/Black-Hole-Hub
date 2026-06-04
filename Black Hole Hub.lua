@@ -748,7 +748,7 @@ task.spawn(function()
     end
 end)
 
--- ПЛАВНОЕ ПРИБЛИЖЕНИЕ К ЦЕЛИ СВЕРХУ БЕЗ ТЕЛЕПОРТОВ (Анти-кик)
+-- ПЛАВНОЕ ПРИБЛИЖЕНИЕ К ЦЕЛИ СВЕРХУ + 🛡️ АНТИ-ОТКИДЫВАНИЕ (Анти-Knockback)
 RunService.RenderStepped:Connect(function(deltaTime)
     if not _G.AutoFarmLevel then return end
     if not currentTarget or not currentTarget.Parent or not currentTarget:FindFirstChild("HumanoidRootPart") then return end
@@ -760,6 +760,16 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
     local mobRoot = currentTarget.HumanoidRootPart
     local myRoot = char.HumanoidRootPart
+
+    -- 🛑 ЖЕСТКАЯ ФИКСАЦИЯ ФИЗИКИ (Сброс скорости и удаление толкателей)
+    myRoot.Velocity = Vector3.zero
+    myRoot.RotVelocity = Vector3.zero
+    
+    for _, force in ipairs(myRoot:GetChildren()) do
+        if force:IsA("BodyVelocity") or force:IsA("BodyPosition") or force:IsA("BodyForce") or force:IsA("BodyGyro") then
+            force:Destroy()
+        end
+    end
 
     -- Позиция строго над врагом (по оси Y), смотрим на него вниз
     local aboveCF = mobRoot.CFrame * CFrame.new(0, _G.FarmDistance, 0)
