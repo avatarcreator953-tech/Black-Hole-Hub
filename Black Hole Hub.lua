@@ -90,7 +90,7 @@ local MainQuestTable = {
 }
 
 ------------------------------------------------------------------------
--- ОПРЕДЕЛЕНИЕ УСТРОЙСТВА (ПК / ТЕЛЕФОН)
+-- ОПРЕДЕЛЕНИЕ УСТРОЙСТВА (АВТОДЕТЕКТ ПК / ТЕЛЕФОН)
 ------------------------------------------------------------------------
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 local viewport = Workspace.CurrentCamera.ViewportSize
@@ -593,16 +593,26 @@ local function SpamSkills()
     end
 end
 
--- Плавный полёт к точке (для подбора фруктов/сундуков)
+-- Плавный полёт к точке (Улучшено с проверкой на смерть)
 local function FlyTo(targetPos)
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local humanoid = char:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    
     local root = char.HumanoidRootPart
     local dist = (root.Position - targetPos).Magnitude
     local dur = dist / _G.FarmSpeed
     local tween = TweenService:Create(root, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
     tween:Play()
+    
+    local conn
+    conn = humanoid.Died:Connect(function()
+        tween:Cancel()
+    end)
+    
     tween.Completed:Wait()
+    if conn then conn:Disconnect() end
 end
 
 ------------------------------------------------------------------------
@@ -612,7 +622,13 @@ local FarmTab = CreateTab("⚔️ Фарм")
 local WorldTab = CreateTab("🌍 Мир")
 local SettingsTab = CreateTab("⚙️ Настройки")
 
-CreateToggle(FarmTab, "Включить Автофарм", false, function(s) _G.AutoFarmLevel = s; if not s then currentTarget = nil end end)
+CreateToggle(FarmTab, "Включить Автофарм", false, function(s) 
+    _G.AutoFarmLevel = s; 
+    if not s then 
+        currentTarget = nil 
+        _G.CurrentRunningNPC = nil 
+    end 
+end)
 CreateToggle(FarmTab, "Авто-Спам Скиллов", true, function(s) _G.SpamSkills = s end)
 CreateSlider(FarmTab, "Дистанция атаки", 8, 20, _G.FarmDistance, function(v) _G.FarmDistance = v end)
 CreateDropdown(FarmTab, "Выбери Оружие", GetWeapons, function(v) _G.SelectedWeapon = v end)
@@ -641,23 +657,29 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
--- ГЛАВНЫЙ ЦИКЛ ФАРМА
+-- ГЛАВНЫЙ ЦИКЛ ФАРМА (Исправлен баг после смерти)
 task.spawn(function()
     while task.wait(0.1) do
-        if not _G.AutoFarmLevel or not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        if not _G.AutoFarmLevel then
             currentTarget = nil
             _G.CurrentRunningNPC = nil
             continue
         end
 
+        local char = LocalPlayer.Character
+        -- Если перс мертв или еще не прогрузился - ждем, не сбрасывая квест
+        if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
+            currentTarget = nil
+            continue
+        end
+
         pcall(function()
             local qKey, qId, npcName = GetQuestData()
-            local hasQuest = false
-            pcall(function()
-                if LocalPlayer.PlayerGui:FindFirstChild("Main") and LocalPlayer.PlayerGui.Main:FindFirstChild("Quest") then
-                    hasQuest = LocalPlayer.PlayerGui.Main.Quest.Visible
-                end
-            end)
+            
+            -- Ждем пока прогрузится интерфейс, чтобы не баговался квест
+            local mainGui = LocalPlayer.PlayerGui:FindFirstChild("Main")
+            if not mainGui or not mainGui:FindFirstChild("Quest") then return end
+            local hasQuest = mainGui.Quest.Visible
 
             if _G.CurrentRunningNPC ~= npcName then
                 local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -681,10 +703,11 @@ task.spawn(function()
             local enemies = Workspace:FindFirstChild("Enemies") or Workspace
             local nearest = nil
             local minDist = math.huge
+            local myPos = char.HumanoidRootPart.Position
 
             for _, child in ipairs(enemies:GetChildren()) do
                 if child.Name == npcName and child:FindFirstChild("Humanoid") and child.Humanoid.Health > 0 and child:FindFirstChild("HumanoidRootPart") then
-                    local dist = (LocalPlayer.Character.HumanoidRootPart.Position - child.HumanoidRootPart.Position).Magnitude
+                    local dist = (myPos - child.HumanoidRootPart.Position).Magnitude
                     if dist < minDist then
                         minDist = dist
                         nearest = child
@@ -697,7 +720,8 @@ task.spawn(function()
             if nearest then
                 EquipWeapon()
                 while nearest and nearest.Parent and nearest:FindFirstChild("Humanoid") and nearest.Humanoid.Health > 0 and _G.AutoFarmLevel do
-                    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
+                    -- Проверка на смерть во время боя внутри цикла
+                    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character.Humanoid.Health <= 0 then break end
 
                     local checkKey, checkId, checkNpc = GetQuestData()
                     if checkNpc ~= npcName then break end
@@ -715,7 +739,7 @@ task.spawn(function()
                     end
                 end)
                 if enemySpawn then
-                    FlyTo(enemySpawn.Position + Vector3.new(0, 10, 0))
+                    FlyTo(enemySpawn.Position + Vector3.new(0, _G.FarmDistance, 0))
                 else
                     task.wait(0.5)
                 end
@@ -724,23 +748,35 @@ task.spawn(function()
     end
 end)
 
--- ПОСТОЯННОЕ ПРИКЛЕИВАНИЕ К ЦЕЛИ СВЕРХУ (КЛЕЙ)
-RunService.RenderStepped:Connect(function()
+-- ПЛАВНОЕ ПРИБЛИЖЕНИЕ К ЦЕЛИ СВЕРХУ БЕЗ ТЕЛЕПОРТОВ (Анти-кик)
+RunService.RenderStepped:Connect(function(deltaTime)
     if not _G.AutoFarmLevel then return end
     if not currentTarget or not currentTarget.Parent or not currentTarget:FindFirstChild("HumanoidRootPart") then return end
+    
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local humanoid = char:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
 
     local mobRoot = currentTarget.HumanoidRootPart
     local myRoot = char.HumanoidRootPart
 
-    -- позиция строго над врагом (по оси Y), смотрим на него
+    -- Позиция строго над врагом (по оси Y), смотрим на него вниз
     local aboveCF = mobRoot.CFrame * CFrame.new(0, _G.FarmDistance, 0)
-    local lookAt = mobRoot.Position -- смотрим на врага (сверху вниз)
+    local lookAt = mobRoot.Position
     local targetCF = CFrame.lookAt(aboveCF.Position, lookAt)
 
-    -- мгновенная фиксация, как клей
-    myRoot.CFrame = targetCF
+    local dist = (myRoot.Position - targetCF.Position).Magnitude
+
+    -- Плавно летим к цели, завися от FarmSpeed (без инстант телепортов)
+    local moveStep = _G.FarmSpeed * deltaTime
+    if dist > 2 then
+        local newPos = myRoot.Position + (targetCF.Position - myRoot.Position).Unit * math.min(moveStep, dist)
+        myRoot.CFrame = CFrame.lookAt(newPos, lookAt)
+    else
+        -- Фиксируемся, когда уже долетели, чтобы не трясло
+        myRoot.CFrame = targetCF
+    end
 end)
 
 -- ОСТАЛЬНЫЕ ПОТОКИ (ФРУКТЫ, СУНДУКИ)
