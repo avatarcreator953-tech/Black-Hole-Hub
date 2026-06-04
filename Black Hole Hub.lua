@@ -24,7 +24,9 @@ local _G = {
     InfJump = false,
     SpamSkills = true,
     SelectedWeapon = nil,
-    CurrentRunningNPC = nil
+    CurrentRunningNPC = nil,
+    AutoHaki = true,            -- Авто-Хаки Вооружения (включено по умолчанию)
+    AutoInstinct = true         -- Авто-Инстинкт Наблюдения (включено по умолчанию)
 }
 
 local WeaponsList = {}
@@ -67,7 +69,7 @@ local MainQuestTable = {
     ForgottenQuest = { { LevelReq = 1425, Name = "Sea Soldier", Task = { ["Sea Soldier"] = 8 } }, { LevelReq = 1450, Name = "Water Fighter", Task = { ["Water Fighter"] = 8 } }, { LevelReq = 1475, Name = "Tide Keeper", Task = { ["Tide Keeper"] = 1 } } },
     PiratePortQuest = { { LevelReq = 1500, Name = "Pirate Millionaire", Task = { ["Pirate Millionaire"] = 8 } }, { LevelReq = 1525, Name = "Pistol Billionaire", Task = { ["Pistol Billionaire"] = 8 } }, { LevelReq = 1550, Name = "Stone", Task = { ["Stone"] = 1 } } },
     DragonCrewQuest = { { LevelReq = 1575, Name = "Dragon Crew Warrior", Task = { ["Dragon Crew Warrior"] = 8 } }, { LevelReq = 1600, Name = "Dragon Crew Archer", Task = { ["Dragon Crew Archer"] = 8 } } },
-    VenomCrewQuest = { { LevelReq = 1625, Name = "Hydra Enforcer", Task = { ["Hydra Enforcer"] = 8 } }, { LevelReq = 1650, Name = "Venomous Assailant", Task = { ["Venomous Assailant"] = 8 } }, { LevelReq = 1675, Name = "Hydra Leader", Task = { ["Hydra Leader"] = 1 } } },
+    VenomQuest = { { LevelReq = 1625, Name = "Hydra Enforcer", Task = { ["Hydra Enforcer"] = 8 } }, { LevelReq = 1650, Name = "Venomous Assailant", Task = { ["Venomous Assailant"] = 8 } }, { LevelReq = 1675, Name = "Hydra Leader", Task = { ["Hydra Leader"] = 1 } } },
     MarineTreeIsland = { { LevelReq = 1700, Name = "Marine Commodore", Task = { ["Marine Commodore"] = 8 } }, { LevelReq = 1725, Name = "Marine Rear Admiral", Task = { ["Marine Rear Admiral"] = 8 } }, { LevelReq = 1750, Name = "Kilo Admiral", Task = { ["Kilo Admiral"] = 1 } } },
     DeepForestIsland3 = { { LevelReq = 1775, Name = "Fishman Raider", Task = { ["Fishman Raider"] = 8 } }, { LevelReq = 1800, Name = "Fishman Captain", Task = { ["Fishman Captain"] = 8 } } },
     DeepForestIsland = { { LevelReq = 1825, Name = "Forest Pirate", Task = { ["Forest Pirate"] = 8 } }, { LevelReq = 1850, Name = "Mythological Pirate", Task = { ["Mythological Pirate"] = 8 } }, { LevelReq = 1875, Name = "Captain Elephant", Task = { ["Captain Elephant"] = 1 } } },
@@ -90,7 +92,7 @@ local MainQuestTable = {
 }
 
 ------------------------------------------------------------------------
--- ОПРЕДЕЛЕНИЕ УСТРОЙСТВА (АВТОДЕТЕКТ ПК / ТЕЛЕФОН)
+-- ОПРЕДЕЛЕНИЕ УСТРОЙСТВА (ПК / ТЕЛЕФОН)
 ------------------------------------------------------------------------
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 local viewport = Workspace.CurrentCamera.ViewportSize
@@ -593,26 +595,16 @@ local function SpamSkills()
     end
 end
 
--- Плавный полёт к точке (Улучшено с проверкой на смерть)
+-- Плавный полёт к точке (для подбора фруктов/сундуков)
 local function FlyTo(targetPos)
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    local humanoid = char:FindFirstChild("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
-    
     local root = char.HumanoidRootPart
     local dist = (root.Position - targetPos).Magnitude
     local dur = dist / _G.FarmSpeed
     local tween = TweenService:Create(root, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame = CFrame.new(targetPos)})
     tween:Play()
-    
-    local conn
-    conn = humanoid.Died:Connect(function()
-        tween:Cancel()
-    end)
-    
     tween.Completed:Wait()
-    if conn then conn:Disconnect() end
 end
 
 ------------------------------------------------------------------------
@@ -622,14 +614,10 @@ local FarmTab = CreateTab("⚔️ Фарм")
 local WorldTab = CreateTab("🌍 Мир")
 local SettingsTab = CreateTab("⚙️ Настройки")
 
-CreateToggle(FarmTab, "Включить Автофарм", false, function(s) 
-    _G.AutoFarmLevel = s; 
-    if not s then 
-        currentTarget = nil 
-        _G.CurrentRunningNPC = nil 
-    end 
-end)
+CreateToggle(FarmTab, "Включить Автофарм", false, function(s) _G.AutoFarmLevel = s; if not s then currentTarget = nil end end)
 CreateToggle(FarmTab, "Авто-Спам Скиллов", true, function(s) _G.SpamSkills = s end)
+CreateToggle(FarmTab, "Авто-Хаки (Вооружение)", true, function(s) _G.AutoHaki = s end)
+CreateToggle(FarmTab, "Авто-Инстинкт (Наблюдение)", true, function(s) _G.AutoInstinct = s end)
 CreateSlider(FarmTab, "Дистанция атаки", 8, 20, _G.FarmDistance, function(v) _G.FarmDistance = v end)
 CreateDropdown(FarmTab, "Выбери Оружие", GetWeapons, function(v) _G.SelectedWeapon = v end)
 
@@ -657,29 +645,23 @@ UserInputService.JumpRequest:Connect(function()
     end
 end)
 
--- ГЛАВНЫЙ ЦИКЛ ФАРМА (Исправлен баг после смерти)
+-- ГЛАВНЫЙ ЦИКЛ ФАРМА
 task.spawn(function()
     while task.wait(0.1) do
-        if not _G.AutoFarmLevel then
+        if not _G.AutoFarmLevel or not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
             currentTarget = nil
             _G.CurrentRunningNPC = nil
             continue
         end
 
-        local char = LocalPlayer.Character
-        -- Если перс мертв или еще не прогрузился - ждем, не сбрасывая квест
-        if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChild("Humanoid") or char.Humanoid.Health <= 0 then
-            currentTarget = nil
-            continue
-        end
-
         pcall(function()
             local qKey, qId, npcName = GetQuestData()
-            
-            -- Ждем пока прогрузится интерфейс, чтобы не баговался квест
-            local mainGui = LocalPlayer.PlayerGui:FindFirstChild("Main")
-            if not mainGui or not mainGui:FindFirstChild("Quest") then return end
-            local hasQuest = mainGui.Quest.Visible
+            local hasQuest = false
+            pcall(function()
+                if LocalPlayer.PlayerGui:FindFirstChild("Main") and LocalPlayer.PlayerGui.Main:FindFirstChild("Quest") then
+                    hasQuest = LocalPlayer.PlayerGui.Main.Quest.Visible
+                end
+            end)
 
             if _G.CurrentRunningNPC ~= npcName then
                 local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -703,11 +685,10 @@ task.spawn(function()
             local enemies = Workspace:FindFirstChild("Enemies") or Workspace
             local nearest = nil
             local minDist = math.huge
-            local myPos = char.HumanoidRootPart.Position
 
             for _, child in ipairs(enemies:GetChildren()) do
                 if child.Name == npcName and child:FindFirstChild("Humanoid") and child.Humanoid.Health > 0 and child:FindFirstChild("HumanoidRootPart") then
-                    local dist = (myPos - child.HumanoidRootPart.Position).Magnitude
+                    local dist = (LocalPlayer.Character.HumanoidRootPart.Position - child.HumanoidRootPart.Position).Magnitude
                     if dist < minDist then
                         minDist = dist
                         nearest = child
@@ -720,8 +701,7 @@ task.spawn(function()
             if nearest then
                 EquipWeapon()
                 while nearest and nearest.Parent and nearest:FindFirstChild("Humanoid") and nearest.Humanoid.Health > 0 and _G.AutoFarmLevel do
-                    -- Проверка на смерть во время боя внутри цикла
-                    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.Character.Humanoid.Health <= 0 then break end
+                    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
 
                     local checkKey, checkId, checkNpc = GetQuestData()
                     if checkNpc ~= npcName then break end
@@ -739,7 +719,7 @@ task.spawn(function()
                     end
                 end)
                 if enemySpawn then
-                    FlyTo(enemySpawn.Position + Vector3.new(0, _G.FarmDistance, 0))
+                    FlyTo(enemySpawn.Position + Vector3.new(0, 10, 0))
                 else
                     task.wait(0.5)
                 end
@@ -748,44 +728,58 @@ task.spawn(function()
     end
 end)
 
--- ПЛАВНОЕ ПРИБЛИЖЕНИЕ К ЦЕЛИ СВЕРХУ + 🛡️ АНТИ-ОТКИДЫВАНИЕ (Анти-Knockback)
-RunService.RenderStepped:Connect(function(deltaTime)
+-- ПОСТОЯННОЕ ПРИКЛЕИВАНИЕ К СПИНЕ ЦЕЛИ (КЛЕЙ)
+RunService.RenderStepped:Connect(function()
     if not _G.AutoFarmLevel then return end
     if not currentTarget or not currentTarget.Parent or not currentTarget:FindFirstChild("HumanoidRootPart") then return end
-    
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    local humanoid = char:FindFirstChild("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
 
     local mobRoot = currentTarget.HumanoidRootPart
     local myRoot = char.HumanoidRootPart
 
-    -- 🛑 ЖЕСТКАЯ ФИКСАЦИЯ ФИЗИКИ (Сброс скорости и удаление толкателей)
-    myRoot.Velocity = Vector3.zero
-    myRoot.RotVelocity = Vector3.zero
-    
-    for _, force in ipairs(myRoot:GetChildren()) do
-        if force:IsA("BodyVelocity") or force:IsA("BodyPosition") or force:IsA("BodyForce") or force:IsA("BodyGyro") then
-            force:Destroy()
+    -- позиция строго за спиной врага, смотрим ему в спину
+    local behindCF = mobRoot.CFrame * CFrame.new(0, 0, _G.FarmDistance)
+    local lookAt = mobRoot.Position -- смотрим на врага (ему в спину)
+    local targetCF = CFrame.lookAt(behindCF.Position, lookAt)
+
+    -- мгновенная фиксация, как клей
+    myRoot.CFrame = targetCF
+end)
+
+-- ПОТОК ДЛЯ АВТОМАТИЧЕСКОГО СЛЕДЖЕНИЯ ЗА ХАКИ И ИНСТИНКТОМ
+task.spawn(function()
+    while task.wait(1) do
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+            
+            -- Проверка и активация Хаки Вооружения (Buso Haki)
+            if _G.AutoHaki then
+                if not char:FindFirstChild("HasBuso") then
+                    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+                    if remotes and remotes:FindFirstChild("CommF_") then
+                        remotes.CommF_:InvokeServer("Buso")
+                    end
+                end
+            end
+            
+            -- Проверка и активация Инстинкта (Ken Haki / Observation)
+            if _G.AutoInstinct then
+                local isInstinctActive = false
+                -- Проверяем наличие визуальных эффектов или элементов интерфейса Инстинкта
+                if Workspace.CurrentCamera:FindFirstChild("CameraVision") or Workspace.CurrentCamera:FindFirstChild("Vision") or LocalPlayer.PlayerGui:FindFirstChild("KenHaki") then
+                    isInstinctActive = true
+                end
+                
+                -- Если инстинкт отключен, прожимаем клавишу "E" для его активации
+                if not isInstinctActive then
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                end
+            end
+            
         end
-    end
-
-    -- Позиция строго над врагом (по оси Y), смотрим на него вниз
-    local aboveCF = mobRoot.CFrame * CFrame.new(0, _G.FarmDistance, 0)
-    local lookAt = mobRoot.Position
-    local targetCF = CFrame.lookAt(aboveCF.Position, lookAt)
-
-    local dist = (myRoot.Position - targetCF.Position).Magnitude
-
-    -- Плавно летим к цели, завися от FarmSpeed (без инстант телепортов)
-    local moveStep = _G.FarmSpeed * deltaTime
-    if dist > 2 then
-        local newPos = myRoot.Position + (targetCF.Position - myRoot.Position).Unit * math.min(moveStep, dist)
-        myRoot.CFrame = CFrame.lookAt(newPos, lookAt)
-    else
-        -- Фиксируемся, когда уже долетели, чтобы не трясло
-        myRoot.CFrame = targetCF
     end
 end)
 
